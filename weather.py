@@ -1,7 +1,55 @@
 from .api import *
 from . import *
+import json
+from time import sleep
+import hoshino
 
 tmp = {}    # 'gid-uid': locationId
+
+bot = hoshino.get_bot()
+
+@sv.scheduled_job('cron', hour = '7')
+async def schedule_weather():
+    data = load_data()
+    for lid in data:
+        tenki = await get_weather_forecast(lid, apikey)
+        for gid in data[lid]['enable_group']:
+            if not isinstance(tenki, tuple):
+                msg = weather_today_text(tenki[0])
+                await bot.send_group_msg(group_id = gid, message = msg)
+            else:
+                code = tenki[0]
+                e = tenki[1]
+                await bot.send_group_msg(group_id = gid, message = f'\n查询出错...错误代码{code},{e},请联系管理员进行维护')
+            sleep(1)
+
+@sv.on_prefix(('添加城市预报','添加预报','添加播报'))
+async def add_schedule(bot, ev):
+    key = f'{ev.group_id}-{ev.user_id}'
+    messag = ev.message.extract_plain_text().strip()
+    lid, succeed = await get_location_id(key, messag, tmp)
+    if succeed == False:
+        await bot.send(ev, '请先发送“搜天气 城市”来选择地区哟', at_sender = True)
+        return
+    if messag:
+        location_idx = messag
+    else:
+        location_idx = '0' #不填或者填错默认为匹配度最高的第一位
+    msg = await add_city(ev['group_id'], lid, tmp[key][str(location_idx)])
+    await bot.send(ev, msg, at_sender = True)
+
+@sv.on_prefix(('取消城市预报','取消预报','取消播报'))
+async def add_schedule(bot, ev):
+    id = ev.message.extract_plain_text().strip()
+    gid = ev['group_id']
+    msg = await del_city(gid, id)
+    await bot.send(ev, msg, at_sender = True)
+
+@sv.on_fullmatch(('查看城市预报','查看预报','查看播报'))
+async def watch_schedule(bot, ev):
+    gid = ev['group_id']
+    msg = await watch_city(gid)
+    await bot.send(ev, msg, at_sender = True)
 
 @sv.on_prefix(('搜天气','查天气','天气预报'))
 async def location_find(bot, ev):
@@ -29,32 +77,14 @@ async def location_find(bot, ev):
 @sv.on_prefix(('实时天气','实况天气','当前天气'))
 async def weather_now(bot, ev):
     key = f'{ev.group_id}-{ev.user_id}'
-    if key not in tmp:
-        await bot.send(ev, '请先发送“搜天气 城市”来选择地区哟')
+    messag = ev.message.extract_plain_text().strip()
+    lid, succeed = await get_location_id(key, messag, tmp)
+    if succeed == False:
+        await bot.send(ev, '请先发送“搜天气 城市”来选择地区哟', at_sender = True)
         return
-    location_dict = tmp[key]
-    if ev.message.extract_plain_text().strip():
-        location_idx = ev.message.extract_plain_text().strip()
-    else:
-        location_idx = '0' #不填或者填错默认为匹配度最高的第一位
-    lid = idx2lid(tmp, key, location_idx)
     tenki = await get_weather_now(lid, apikey)
     if not isinstance(tenki, tuple):
-        tenki = tenki[0]
-        msg = f'''
-==={tenki['name']}实时天气===
-当地观测时间:{tenki['obsTime'].split('+')[0].replace('T',' ')}
-当前气象:{tenki['text']}
-当前温度:{tenki['temp']}°C
-当前体感温度:{tenki['feelsLike']}°C
-当前风力等级:{tenki['windScale']}级
-当前风速:{tenki['windSpeed']}km/h
-当前相对湿度:{tenki['humidity']}%
-当前大气压强:{tenki['pressure']}hpa
-当前能见度:{tenki['vis']}km
-当前云量:{tenki['cloud']}%
-也可以进入{tenki['fxLink']}查看当前城市天气详情
-        '''.strip()
+        msg = weather_now_text(tenki[0])
         await bot.send(ev, f'\n{msg}', at_sender=True)
     else:
         code = tenki[0]
@@ -64,35 +94,14 @@ async def weather_now(bot, ev):
 @sv.on_prefix(('今日天气'))
 async def weather_tomorrow(bot, ev):
     key = f'{ev.group_id}-{ev.user_id}'
-    if key not in tmp:
-        await bot.send(ev, '请先发送“搜天气 城市”来选择地区哟')
+    messag = ev.message.extract_plain_text().strip()
+    lid, succeed = await get_location_id(key, messag, tmp)
+    if succeed == False:
+        await bot.send(ev, '请先发送“搜天气 城市”来选择地区哟', at_sender = True)
         return
-    location_dict = tmp[key]
-    if ev.message.extract_plain_text().strip():
-        location_idx = ev.message.extract_plain_text().strip()
-    else:
-        location_idx = '0' #不填或者填错默认为匹配度最高的第一位
-    lid = idx2lid(tmp, key, location_idx)
     tenki = await get_weather_forecast(lid, apikey)
     if not isinstance(tenki, tuple):
-        tenki = tenki[0]
-        textDay = tenki_text(tenki['textDay'], 'day') # 将文字描述转换成句子，后续将移入config方便自定义
-        textNight = tenki_text(tenki['textNight'], 'night')
-        textUV = uv_text(int(tenki['uvIndex']))
-        msg = f'''
-==={ymd2chs(tenki['fxDate'])}{tenki['name']}天气预报===
-今天{textDay}
-今日最低温度为{tenki['tempMin']}°C，最高温度是{tenki['tempMax']}°C
-白天的风力等级为{tenki['windScaleDay']}级，风向是{tenki['windDirDay']}哟
-{textUV}
-今天{textNight}
-夜间风力等级为{tenki['windScaleNight']}级，风向是{tenki['windDirNight']}的说
-日出时间为{hm2chs(tenki['sunrise'])}，日落时间则为{hm2chs(tenki['sunset'])}哒
-今晚的{tenki['moonPhase']}将在{hm2chs(tenki['moonrise'])}升起，{hm2chs(tenki['moonset'])}落下
-今日的相对湿度为{tenki['humidity']}%，大气压强为{tenki['pressure']}hpa
-能见度为{tenki['vis']}km，云量为{tenki['cloud']}%，总降水量为{tenki['precip']}mm
-也可以进入{tenki['fxLink']}查看当前城市天气详情哦~
-        '''.strip()
+        msg = weather_today_text(tenki[0])
         await bot.send(ev, f'\n{msg}', at_sender=True)
     else:
         code = tenki[0]
@@ -102,30 +111,16 @@ async def weather_tomorrow(bot, ev):
 @sv.on_prefix(('天气简报'))
 async def weather_shortdesc(bot, ev):
     key = f'{ev.group_id}-{ev.user_id}'
-    if key not in tmp:
-        await bot.send(ev, '请先发送“搜天气 城市”来选择地区哟')
+    messag = ev.message.extract_plain_text().strip()
+    lid, succeed = await get_location_id(key, messag, tmp)
+    if succeed == False:
+        await bot.send(ev, '请先发送“搜天气 城市”来选择地区哟', at_sender = True)
         return
-    if ev.message.extract_plain_text().strip():
-        location_idx = ev.message.extract_plain_text().strip()
-    else:
-        location_idx = '0' #不填或者填错默认为匹配度最高的第一位
-    lid = idx2lid(tmp, key, location_idx)
     tenki = await get_weather_forecast(lid, apikey)
     city = tenki[0]['name']
     msg = [f'\n{city}近三日天气简报']
     if not isinstance(tenki, tuple):
-        for desc in tenki:
-            if desc['textDay'] == desc['textNight']:
-                textTrans = desc['textDay']
-            else:
-                textTrans = f"{desc['textDay']}转{desc['textNight']}"
-            if desc['tempMax'] == desc['tempMin']:
-                tempTrans = desc['tempMax']
-            else:
-                tempTrans = f"{desc['tempMax']}°C~{desc['tempMin']}°C"
-            msg.append(
-                f"{'='*15}\n{ymd2chs(desc['fxDate'])}\n{textTrans}\n{tempTrans}"
-            )
+        msg.extend(weather_forecast_text(tenki))
         await bot.send(ev, '\n'.join(msg), at_sender=True)
     else:
         code = tenki[0]

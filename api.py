@@ -3,6 +3,7 @@ from . import *
 
 import json
 import requests
+import os
 
 from hoshino import logger
 
@@ -206,6 +207,137 @@ def ymd2chs(ymd):
 def hm2chs(hm):
     chs = hm.replace(':','时')+'分'
     return chs
+
+async def get_location_id(key, messag, tmp):
+    if key not in tmp:
+        return -1, False
+    location_dict = tmp[key]
+    if messag:
+        location_idx = messag
+    else:
+        location_idx = '0' #不填或者填错默认为匹配度最高的第一位
+    lid = idx2lid(tmp, key, location_idx)
+    return lid, True
+
+async def add_city(gid, id, city):
+    data = load_data()
+    # id = str(id)
+    # gid = str(gid)
+    if (data == None):
+        data = {}
+    if id in data:
+        if gid in data[id]['enable_group']:
+            msg = f'本群已经添加了这个城市的播报啦'
+            return msg
+    else:
+        data[id] = {}
+        data[id]['enable_group'] = []
+        data[id]['describe'] = f"{city['country']} - {city['adm1']} - {city['adm2']} - {city['name']}"
+    data[id]['enable_group'].append(gid)
+    save_data(data)
+    msg = f'这座城市，多位了关心的人'
+    return msg
+
+async def del_city(gid, id):
+    data = load_data()
+    if id == None or id == '':
+        msg = f'你怎么不告诉我删除哪个呢？'
+    elif id not in data or gid not in data[id]['enable_group']:
+        msg = f'这序号你想删个锤子哦'
+    else:
+        data[id]['enable_group'].remove(gid)
+        if (len(data[id]['enable_group']) == 0):
+            data.pop(id)
+        save_data(data)
+        msg = f'这座城市……少了位关心的人'
+    return msg
+
+async def watch_city(gid):
+    data = load_data()
+    msg = '' 
+    for id, group in data.items():
+        if gid in group['enable_group']:
+            msg += f"{id} - {group['describe']}\n"
+    if len(msg) == 0:
+        msg = '本群没有预报的城市哦'
+    else:
+        msg = f'本群添加预报的城市有：\n' + msg + f'要删除请回复 取消城市预报 <序号> 哦'
+    return msg
+
+def weather_today_text(tenki):
+    textDay = tenki_text(tenki['textDay'], 'day') # 将文字描述转换成句子，后续将移入config方便自定义
+    textNight = tenki_text(tenki['textNight'], 'night')
+    textUV = uv_text(int(tenki['uvIndex']))
+    msg = f'''
+==={ymd2chs(tenki['fxDate'])}{tenki['name']}天气预报===
+今天{textDay}
+今日最低温度为{tenki['tempMin']}°C，最高温度是{tenki['tempMax']}°C
+白天的风力等级为{tenki['windScaleDay']}级，风向是{tenki['windDirDay']}哟
+{textUV}
+今天{textNight}
+夜间风力等级为{tenki['windScaleNight']}级，风向是{tenki['windDirNight']}的说
+日出时间为{hm2chs(tenki['sunrise'])}，日落时间则为{hm2chs(tenki['sunset'])}哒
+今晚的{tenki['moonPhase']}将在{hm2chs(tenki['moonrise'])}升起，{hm2chs(tenki['moonset'])}落下
+今日的相对湿度为{tenki['humidity']}%，大气压强为{tenki['pressure']}hpa
+能见度为{tenki['vis']}km，云量为{tenki['cloud']}%，总降水量为{tenki['precip']}mm
+也可以进入{tenki['fxLink']}查看当前城市天气详情哦~
+    '''.strip()
+    return msg
+
+def weather_now_text(tenki):
+    msg = f'''
+==={tenki['name']}实时天气===
+当地观测时间:{tenki['obsTime'].split('+')[0].replace('T',' ')}
+当前气象:{tenki['text']}
+当前温度:{tenki['temp']}°C
+当前体感温度:{tenki['feelsLike']}°C
+当前风力等级:{tenki['windScale']}级
+当前风速:{tenki['windSpeed']}km/h
+当前相对湿度:{tenki['humidity']}%
+当前大气压强:{tenki['pressure']}hpa
+当前能见度:{tenki['vis']}km
+当前云量:{tenki['cloud']}%
+也可以进入{tenki['fxLink']}查看当前城市天气详情
+    '''.strip()
+    return msg
+
+def weather_forecast_text(tenki):
+    msg = []
+    for desc in tenki:
+        if desc['textDay'] == desc['textNight']:
+            textTrans = desc['textDay']
+        else:
+            textTrans = f"{desc['textDay']}转{desc['textNight']}"
+        if desc['tempMax'] == desc['tempMin']:
+            tempTrans = desc['tempMax']
+        else:
+            tempTrans = f"{desc['tempMax']}°C~{desc['tempMin']}°C"
+        msg.append(
+            f"{'='*15}\n{ymd2chs(desc['fxDate'])}\n{textTrans}\n{tempTrans}"
+        )
+    return msg
+
+def load_data():    #摘自zyujs的pcr_calender
+    path = os.path.join(os.path.dirname(__file__), 'data.json')
+    if not os.path.exists(path):
+        return
+    try:
+        with open(path, encoding='utf8') as f:
+            group_data = {}
+            data = json.load(f)
+            for k, v in data.items():
+                group_data[k] = v
+            return group_data
+    except:
+        traceback.print_exc()
+
+def save_data(args):     #摘自zyujs的pcr_calender
+    path = os.path.join(os.path.dirname(__file__), 'data.json')
+    try:
+        with open(path, 'w', encoding='utf8') as f:
+            json.dump(args , f, ensure_ascii=False, indent=2)
+    except:
+        traceback.print_exc()
 
 
 
