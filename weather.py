@@ -12,10 +12,10 @@ bot = hoshino.get_bot()
 async def schedule_weather():
     data = load_data()
     for lid in data:
-        tenki = await get_weather_forecast(lid, apikey)
+        tenki = await get_weather_forecast(lid, apikey, 3)
         for gid in data[lid]['enable_group']:
             if not isinstance(tenki, tuple):
-                msg = weather_today_text(tenki[0])
+                msg = weather_today_text(tenki[0], '今')
                 await bot.send_group_msg(group_id = gid, message = msg)
             else:
                 code = tenki[0]
