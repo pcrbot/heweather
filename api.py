@@ -7,6 +7,7 @@ import os
 
 from hoshino import logger
 
+
 '''
 城市信息查询返回格式:
 id: 城市/地区id
@@ -116,11 +117,11 @@ uvIndex: 预报当天紫外线强度指数
 fxLink: 天气自适应网页
 name: 城市名
 '''
-async def get_weather_forecast(location, key):
+async def get_weather_forecast(location, key, day):         #day 表示获得未来3天或7天的天气
     tenkiyohou_list = []
     location_info = await get_location_name(location, key)
     location = location_info[0]['id']
-    url = 'https://devapi.heweather.net/v7/weather/3d?key=' + key + '&location=' + location
+    url = f'https://devapi.heweather.net/v7/weather/{day}d?key=' + key + '&location=' + location
     try:
         resp = requests.request('GET', url, timeout=5).json()
         if resp and resp['code'] == '200':
@@ -166,6 +167,62 @@ async def get_weather_forecast(location, key):
         tenkiyohou_list = ('请求超时，请重试', f'错误信息为{e}')
     return tenkiyohou_list
 
+'''
+天气预报查询返回格式
+逐小时预报（未来24小时）
+fxTime:	    时间
+temp:   	温度
+icon:	    天气状况图标代码
+text:	    天气状况文字描述
+wind360:	风向360角度
+windDir:	风向
+windScale:	风力等级
+windSpeed:	风速，公里/小时
+humidity:	相对湿度，百分比数值
+precip:	    降水量，默认单位：毫米
+pop:	    降水概率，百分比数值，可能为空
+pressure:	大气压强，默认单位：百帕
+cloud:	    云量，百分比数值
+dew:    	露点温度
+'''
+async def get_weather_hour(location, key):
+    tenkiyohou_list = []
+    location_info = await get_location_name(location, key)
+    location = location_info[0]['id']
+    url = f'https://devapi.qweather.com/v7/weather/24h?key=' + key + '&location=' + location
+    try:
+        resp = requests.request('GET', url, timeout=5).json()
+        if resp and resp['code'] == '200':
+            for item in resp['hourly']:
+                tenkiyohou_list.append(
+                    {
+                        'fxTime': item['fxTime'],
+                        'temp': item['temp'],
+                        'icon': item['icon'],
+                        'text': item['text'],
+                        'wind360': item['wind360'],
+                        'windDir': item['windDir'],
+                        'windScale': item['windScale'],
+                        'windSpeed': item['windSpeed'],
+                        'humidity': item['humidity'],
+                        'pop': item['pop'],
+                        'precip': item['precip'],
+                        'pressure': item['pressure'],
+                        'cloud': item['cloud'],
+                        'dew': item['dew'],
+                        'fxLink': resp['fxLink'],
+                        'name': location_info[0]['name']
+                    }
+                )
+        else:
+            e = stauts_code(resp['code'])
+            logger.error(f'天气预报获取接口调用失败,{e}')
+            tenkiyohou_list = (resp['code'], e)            
+    except Exception as e:  
+        logger.error(f'获取天气预报数据超时,错误信息为{e}')
+        tenkiyohou_list = ('请求超时，请重试', f'错误信息为{e}')
+    return tenkiyohou_list
+
 def idx2lid(tmp, key, lidx):
     ldict = tmp[key]
     for idx in lidx:
@@ -185,8 +242,8 @@ def tenki_text(text, time):
         text_list = config.TENKI_DESC_NIGHT
     return text_list[text]
 
-def uv_text(uv):
-    text = f'今日紫外线强度指数为{uv}，'
+def uv_text(uv, day_text):
+    text = f'{day_text}日紫外线强度指数为{uv}，'
     if 0 <= uv < 3:
         text += config.UV_LV1
     elif 3 <= uv < 5:
@@ -221,8 +278,6 @@ async def get_location_id(key, messag, tmp):
 
 async def add_city(gid, id, city):
     data = load_data()
-    # id = str(id)
-    # gid = str(gid)
     if (data == None):
         data = {}
     if id in data:
@@ -264,21 +319,21 @@ async def watch_city(gid):
         msg = f'本群添加预报的城市有：\n' + msg + f'要删除请回复 取消城市预报 <序号> 哦'
     return msg
 
-def weather_today_text(tenki):
+def weather_today_text(tenki, day_text):
     textDay = tenki_text(tenki['textDay'], 'day') # 将文字描述转换成句子，后续将移入config方便自定义
     textNight = tenki_text(tenki['textNight'], 'night')
-    textUV = uv_text(int(tenki['uvIndex']))
+    textUV = uv_text(int(tenki['uvIndex']), day_text)
     msg = f'''
 ==={ymd2chs(tenki['fxDate'])}{tenki['name']}天气预报===
-今天{textDay}
-今日最低温度为{tenki['tempMin']}°C，最高温度是{tenki['tempMax']}°C
+{day_text}天{textDay}
+{day_text}日最低温度为{tenki['tempMin']}°C，最高温度是{tenki['tempMax']}°C
 白天的风力等级为{tenki['windScaleDay']}级，风向是{tenki['windDirDay']}哟
 {textUV}
-今天{textNight}
+{day_text}天{textNight}
 夜间风力等级为{tenki['windScaleNight']}级，风向是{tenki['windDirNight']}的说
 日出时间为{hm2chs(tenki['sunrise'])}，日落时间则为{hm2chs(tenki['sunset'])}哒
-今晚的{tenki['moonPhase']}将在{hm2chs(tenki['moonrise'])}升起，{hm2chs(tenki['moonset'])}落下
-今日的相对湿度为{tenki['humidity']}%，大气压强为{tenki['pressure']}hpa
+{day_text}晚的{tenki['moonPhase']}将在{hm2chs(tenki['moonrise'])}升起，{hm2chs(tenki['moonset'])}落下
+{day_text}日的相对湿度为{tenki['humidity']}%，大气压强为{tenki['pressure']}hpa
 能见度为{tenki['vis']}km，云量为{tenki['cloud']}%，总降水量为{tenki['precip']}mm
 也可以进入{tenki['fxLink']}查看当前城市天气详情哦~
     '''.strip()
@@ -317,7 +372,22 @@ def weather_forecast_text(tenki):
         )
     return msg
 
-def load_data():    #摘自zyujs的pcr_calender
+def weather_hour_text(tenki):
+    msg = []
+    for desc in tenki:
+        pos = desc['fxTime'].find('T')
+        msg.append(f'''
+{'='*15}
+{ymd2chs(desc['fxTime'][0:pos])}{desc['fxTime'][pos+1:pos+3]}时
+温度:{desc['temp']}°C
+天气:{desc['text']}
+风力等级:{desc['windScale']}级
+降雨概率:{desc['pop']}%
+'''.strip()
+        )
+    return msg
+
+def load_data():     #摘自zyujs的pcr_calender
     path = os.path.join(os.path.dirname(__file__), 'data.json')
     if not os.path.exists(path):
         return
